@@ -30,6 +30,38 @@ Come find us on the [development community chat](https://zulip.com/development-c
 [rust-case-study]: https://zulip.com/case-studies/rust/
 [features]: https://zulip.com/features/
 
+## Build & Test Instructions
+
+### Prerequisites
+- Ubuntu Linux (22.04 / 24.04) or Windows WSL2 (Ubuntu)
+- Git, Python 3.10+, PostgreSQL, Redis, Memcached, and `sudo` privileges
+
+### 1. Clone and Checkout the Branch
+```bash
+git clone https://github.com/huriazahra/zulip.git
+cd zulip
+git checkout assignment-2-refactoring
+```
+
+### 2. Provision the Development Environment
+Run Zulip's automated provisioning script to install all Python, Node, and database dependencies:
+```bash
+./tools/provision
+source /srv/zulip-py3-venv/bin/activate
+```
+
+### 3. Build / Run the Development Server
+```bash
+./tools/run-dev
+```
+
+### 4. Run Backend Tests & Code Quality Checks
+To verify the refactored Jira webhook module (`zerver/webhooks/jira`):
+```bash
+./tools/test-backend zerver/webhooks/jira/tests.py
+./tools/lint zerver/webhooks/jira/
+```
+
 ## Getting started
 
 - **Contributing code**. Check out our [guide for new
