@@ -209,6 +209,32 @@ def add_change_info(
     return content
 
 
+def extract_assignee_mention(payload: WildValue, realm: Realm) -> str:
+    assignee = get_in(payload, ["issue", "fields", "assignee"])
+    has_valid_assignee = bool(assignee.value) and isinstance(assignee.value, dict)
+    if not has_valid_assignee:
+        return ""
+    return get_user_mention(realm, assignee)
+
+
+def format_changelog_items(changelog: WildValue, assignee_mention: str) -> str:
+    changes = ""
+    items = changelog.get("items")
+    for item in items:
+        field = item.get("field").tame(check_none_or(check_string))
+        is_assignee_with_mention = field == "assignee" and assignee_mention != ""
+        if is_assignee_with_mention:
+            target_field_string = assignee_mention
+        else:
+            raw_target = item.get("toString").tame(check_none_or(check_string))
+            target_field_string = f"**{raw_target}**"
+
+        from_field_string = item.get("fromString").tame(check_none_or(check_string))
+        if target_field_string or from_field_string:
+            changes = add_change_info(changes, field, from_field_string, target_field_string)
+    return changes
+
+
 def handle_updated_issue_event(payload: WildValue, user_profile: UserProfile) -> str:
     # Reassigned, commented, reopened, and resolved events are all bundled
     # into this one 'updated' event type, so we try to extract the meaningful
@@ -216,40 +242,15 @@ def handle_updated_issue_event(payload: WildValue, user_profile: UserProfile) ->
     issue_id = get_in(payload, ["issue", "key"]).tame(check_string)
     issue = get_issue_string(payload, issue_id, True)
 
-    assignee = get_in(payload, ["issue", "fields", "assignee"])
+    assignee_mention = extract_assignee_mention(payload, user_profile.realm)
+    assignee_blurb = f" (assigned to {assignee_mention})" if assignee_mention else ""
 
-    if assignee.value and isinstance(assignee.value, dict):
-        assignee_mention = get_user_mention(user_profile.realm, assignee)
-    else:
-        assignee_mention = ""
+    author = get_issue_author(payload, user_profile.realm)
+    content = f"{author} updated {issue}{assignee_blurb}:\n\n"
 
-    if assignee_mention != "":
-        assignee_blurb = f" (assigned to {assignee_mention})"
-    else:
-        assignee_blurb = ""
-
-    content = (
-        f"{get_issue_author(payload, user_profile.realm)} updated {issue}{assignee_blurb}:\n\n"
-    )
     changelog = payload.get("changelog")
-
     if changelog:
-        # Use the changelog to display the changes, whitelist types we accept
-        items = changelog.get("items")
-        for item in items:
-            field = item.get("field").tame(check_none_or(check_string))
-
-            if field == "assignee" and assignee_mention != "":
-                target_field_string = assignee_mention
-            else:
-                # Convert a user's target to a @-mention if possible
-                target_field_string = "**{}**".format(
-                    item.get("toString").tame(check_none_or(check_string))
-                )
-
-            from_field_string = item.get("fromString").tame(check_none_or(check_string))
-            if target_field_string or from_field_string:
-                content = add_change_info(content, field, from_field_string, target_field_string)
+        content += format_changelog_items(changelog, assignee_mention)
 
     return content
 
@@ -257,16 +258,15 @@ def handle_updated_issue_event(payload: WildValue, user_profile: UserProfile) ->
 def handle_created_issue_event(payload: WildValue, user_profile: UserProfile) -> str:
     priority = get_in(payload, ["issue", "fields", "priority", "name"]).tame(check_string).lower()
 
-    assignee_payload = get_in(payload, ["issue", "fields", "assignee"])
-    if assignee_payload.value and isinstance(assignee_payload.value, dict):
-        assignee_blurb = f" (assigned to {get_user_mention(user_profile.realm, assignee_payload)})"
-    else:
-        assignee_blurb = ""
+    assignee_mention = extract_assignee_mention(payload, user_profile.realm)
+    assignee_blurb = f" (assigned to {assignee_mention})" if assignee_mention else ""
 
+    author = get_issue_author(payload, user_profile.realm)
+    issue_string = get_issue_string(payload, with_title=True)
     template = "{author} created {issue_string} with {priority} priority{assignee_blurb}."
     return template.format(
-        author=get_issue_author(payload, user_profile.realm),
-        issue_string=get_issue_string(payload, with_title=True),
+        author=author,
+        issue_string=issue_string,
         priority=priority,
         assignee_blurb=assignee_blurb,
     )
@@ -299,24 +299,20 @@ def get_comment_author(comment_payload: WildValue, realm: Realm) -> str:
 
 
 def handle_comment_created_event(payload: WildValue, user_profile: UserProfile) -> str:
-    return "{author} commented on {issue_string}\
-\n``` quote\n{comment}\n```\n".format(
-        author=get_comment_author(payload["comment"], user_profile.realm),
-        issue_string=get_issue_string(payload, with_title=True),
-        comment=normalize_comment(
-            payload["comment"]["body"].tame(check_string), user_profile.realm
-        ),
-    )
+    author = get_comment_author(payload["comment"], user_profile.realm)
+    issue_string = get_issue_string(payload, with_title=True)
+    raw_comment_body = payload["comment"]["body"].tame(check_string)
+    formatted_comment = normalize_comment(raw_comment_body, user_profile.realm)
+    return f"{author} commented on {issue_string}\n``` quote\n{formatted_comment}\n```\n"
 
 
 def handle_comment_updated_event(payload: WildValue, user_profile: UserProfile) -> str:
-    return "{author} updated their comment on {issue_string}\
-\n``` quote\n{comment}\n```\n".format(
-        author=get_comment_author(payload["comment"], user_profile.realm),
-        issue_string=get_issue_string(payload, with_title=True),
-        comment=normalize_comment(
-            payload["comment"]["body"].tame(check_string), user_profile.realm
-        ),
+    author = get_comment_author(payload["comment"], user_profile.realm)
+    issue_string = get_issue_string(payload, with_title=True)
+    raw_comment_body = payload["comment"]["body"].tame(check_string)
+    formatted_comment = normalize_comment(raw_comment_body, user_profile.realm)
+    return (
+        f"{author} updated their comment on {issue_string}\n``` quote\n{formatted_comment}\n```\n"
     )
 
 
